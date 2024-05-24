@@ -203,7 +203,28 @@ class FuncCallNode:
     def __repr__(self):
         return f"{self.node_to_call}({self.arg_nodes})"
 
+class ImportNode:
+    def __init__(self, module_name: Token, alias: Token|None = None, pos_start: Position|None = None, pos_end: Position|None = None):
+        self.module_name = module_name
+        self.alias = alias or module_name
 
+        self.pos_start = pos_start or self.module_name.pos_start
+        self.pos_end = pos_end or self.alias.pos_ends # type: ignore
+
+    def __repr__(self):
+        return f"import {self.module_name} as {self.alias}"
+    
+class FromImportNode:
+    def __init__(self, module_name: Token, functions: list[tuple[Token, Token|None]], pos_start: Position, pos_end: Position):
+        self.module_name = module_name
+        self.functions = functions
+
+        self.pos_start = pos_start
+        self.pos_end = pos_end
+        
+    def __repr__(self):
+        return f"from {self.module_name} import {self.functions}"
+        
 #######################################
 # PARSE RESULT
 #######################################
@@ -450,7 +471,7 @@ class Parser:
         return self.power()
 
     def power(self) -> ParseResult:  # ParseResult is used to return error or node
-        return self.bin_op(self.atom, (TT_POW,), self.factor)
+        return self.bin_op(self.call, (TT_POW,), self.factor)
 
     def if_expr(self) -> ParseResult:  # ParseResult is used to return error or node
         res = ParseResult()
@@ -663,42 +684,52 @@ class Parser:
 
         return res.success(WhileNode(condition, body))
 
-    def var_func_access(
-        self,
-    ) -> ParseResult:  # ParseResult is used to return error or node
+    def call(self):
         res = ParseResult()
-        var_name = self.current_tok
-        res.register_advancement()
-        self.advance()
+        atom = res.register(self.atom())
+        if res.error:
+            return res
+
         if self.current_tok.type == TT_LPAREN:
-            args: list[Any] = []
             res.register_advancement()
             self.current_tok = self.advance()
+            arg_nodes:list[Any] = []
+
             if self.current_tok.type == TT_RPAREN:
                 res.register_advancement()
-                self.advance()
+                self.current_tok = self.advance()
             else:
-                args.append(res.register(self.expr()))
+                arg_nodes.append(res.register(self.expr()))
                 if res.error:
-                    return res
+                    return res.failure(
+                        InvalidSyntaxError(
+                            self.current_tok.pos_start,
+                            self.current_tok.pos_end,
+                            "Expected ')', or expression",
+                        )
+                    )
+
                 while self.current_tok.type == TT_COMMA:
                     res.register_advancement()
                     self.advance()
-                    args.append(res.register(self.expr()))
+
+                    arg_nodes.append(res.register(self.expr()))
                     if res.error:
                         return res
+
                 if self.current_tok.type != TT_RPAREN:
                     return res.failure(
                         InvalidSyntaxError(
                             self.current_tok.pos_start,
                             self.current_tok.pos_end,
-                            "Expected ')' or args",
+                            f"Expected ',' or ')'",
                         )
                     )
+
                 res.register_advancement()
                 self.advance()
-            return res.success(FuncCallNode(var_name, args))
-        return res.success(VarAccessNode(var_name))
+            return res.success(FuncCallNode(atom, arg_nodes))
+        return res.success(atom)
 
     def func_def(self) -> ParseResult:  # ParseResult is used to return error or node
         res = ParseResult()
@@ -771,7 +802,7 @@ class Parser:
             res.register_advancement()
             self.advance()
 
-            body = res.register(self.expr())
+            body = res.register(self.statement())
             if res.error:
                 return res
         else:
@@ -838,6 +869,178 @@ class Parser:
 
         return res.success(ListNode(element_nodes, pos_start, self.current_tok.pos_end))
 
+    def import_expr(self) -> ParseResult:  # ParseResult is used to return error or node
+        res = ParseResult()
+        if not self.current_tok.matches(TT_KEYWORD, "import"):
+            return res.failure(
+                InvalidSyntaxError(
+                    self.current_tok.pos_start,
+                    self.current_tok.pos_end,
+                    f"Expected 'import'",
+                )
+            )
+        pos_start = self.current_tok.pos_start.copy()
+        
+        res.register_advancement()
+        self.advance()
+        
+        if self.current_tok.type != TT_IDENTIFIER:
+            return res.failure(
+                InvalidSyntaxError(
+                    self.current_tok.pos_start,
+                    self.current_tok.pos_end,
+                    "Expected identifier",
+                )
+            )
+        
+        module_name = self.current_tok
+        
+        res.register_advancement()
+        self.advance()
+        
+        if self.current_tok.matches(TT_KEYWORD, "as"):
+            res.register_advancement()
+            self.advance()
+            
+            if self.current_tok.type != TT_IDENTIFIER:
+                return res.failure(
+                    InvalidSyntaxError(
+                        self.current_tok.pos_start,
+                        self.current_tok.pos_end,
+                        "Expected identifier",
+                    )
+                )
+            
+            alias = self.current_tok
+            
+            res.register_advancement()
+            self.advance()
+        else:
+            alias = None
+        
+        return res.success(ImportNode(module_name, alias, pos_start, self.current_tok.pos_end))
+
+    def from_import_expr(self) -> ParseResult:  # ParseResult is used to return error or node
+        res = ParseResult()
+        if not self.current_tok.matches(TT_KEYWORD, "from"):
+            return res.failure(
+                InvalidSyntaxError(
+                    self.current_tok.pos_start,
+                    self.current_tok.pos_end,
+                    f"Expected 'from'",
+                )
+            )
+        pos_start = self.current_tok.pos_start.copy()
+        
+        res.register_advancement()
+        self.advance()
+        
+        if self.current_tok.type != TT_IDENTIFIER:
+            return res.failure(
+                InvalidSyntaxError(
+                    self.current_tok.pos_start,
+                    self.current_tok.pos_end,
+                    "Expected identifier",
+                )
+            )
+        
+        module_name = self.current_tok
+        
+        res.register_advancement()
+        self.advance()
+        
+        if not self.current_tok.matches(TT_KEYWORD, "import"):
+            return res.failure(
+                InvalidSyntaxError(
+                    self.current_tok.pos_start,
+                    self.current_tok.pos_end,
+                    f"Expected 'import'",
+                )
+            )
+        
+        res.register_advancement()
+        self.advance()
+        
+        functions: list[tuple[Token, Token|None]] = []
+        
+        if not self.current_tok.type == TT_IDENTIFIER:
+            return res.failure(
+                InvalidSyntaxError(
+                    self.current_tok.pos_start,
+                    self.current_tok.pos_end,
+                    "Expected identifier",
+                )
+            )
+        
+        func1 = self.current_tok
+        res.register_advancement()
+        self.advance()
+        
+        if self.current_tok.matches(TT_KEYWORD, "as"):
+            res.register_advancement()
+            self.advance()
+            
+            if self.current_tok.type != TT_IDENTIFIER:
+                return res.failure(
+                    InvalidSyntaxError(
+                        self.current_tok.pos_start,
+                        self.current_tok.pos_end,
+                        "Expected identifier",
+                    )
+                )
+            
+            func1alias = self.current_tok
+            
+            res.register_advancement()
+            self.advance()
+        else:
+            func1alias = None
+        
+        functions.append((func1, func1alias))
+        
+        while self.current_tok.type == TT_COMMA: # type: ignore
+            res.register_advancement()
+            self.advance()
+            
+            if self.current_tok.type != TT_IDENTIFIER:
+                return res.failure(
+                    InvalidSyntaxError(
+                        self.current_tok.pos_start,
+                        self.current_tok.pos_end,
+                        "Expected identifier",
+                    )
+                )
+            
+            func = self.current_tok
+            res.register_advancement()
+            self.advance()
+            
+            if self.current_tok.matches(TT_KEYWORD, "as"):
+                res.register_advancement()
+                self.advance()
+                
+                if self.current_tok.type != TT_IDENTIFIER:
+                    return res.failure(
+                        InvalidSyntaxError(
+                            self.current_tok.pos_start,
+                            self.current_tok.pos_end,
+                            "Expected identifier",
+                        )
+                    )
+                
+                funcalias = self.current_tok
+                
+                res.register_advancement()
+                self.advance()
+            else:
+                funcalias = None
+            
+            functions.append((func, funcalias))
+    
+        return res.success(FromImportNode(module_name, functions, pos_start, self.current_tok.pos_end))
+        
+                
+
     def atom(self):
         res = ParseResult()
         tok = self.current_tok
@@ -868,8 +1071,9 @@ class Parser:
                     )
                 )
         elif tok.type == TT_IDENTIFIER:
-            return res.success(self.var_func_access())
-
+            res.register_advancement()
+            self.advance()
+            return res.success(VarAccessNode(tok))
         elif tok.matches(TT_KEYWORD, "if"):
             if_expr = res.register(self.if_expr())
             if res.error:
@@ -899,6 +1103,18 @@ class Parser:
             if res.error:
                 return res
             return res.success(list_expr)
+
+        elif tok.matches(TT_KEYWORD, "import"):
+            import_expr = res.register(self.import_expr())
+            if res.error:
+                return res
+            return res.success(import_expr)
+        
+        elif tok.matches(TT_KEYWORD, "from"):
+            from_import_expr = res.register(self.from_import_expr())
+            if res.error:
+                return res
+            return res.success(from_import_expr)
 
         return res.failure(
             InvalidSyntaxError(

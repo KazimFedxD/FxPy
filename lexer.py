@@ -59,6 +59,9 @@ RESERVED_KEYWORDS = [
     "continue",
     "return",
     "fex",
+    "import",
+    "from",
+    "as",
 ]
 
 
@@ -201,7 +204,7 @@ class Lexer:
 
         while (
             self.current_char != None
-            and self.current_char in string.ascii_letters + "_" + "0123456789"
+            and self.current_char in string.ascii_letters + "_" + "0123456789" + "."
         ):
             id_str += self.current_char
             self.advance()

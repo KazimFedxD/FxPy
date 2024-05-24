@@ -1,10 +1,5 @@
 from interpreter import *
 
-global_symbol_table = SymbolTable()
-
-global_symbol_table.set("Null", Number(0))
-global_symbol_table.set("True", Boolean(True))
-global_symbol_table.set("False", Boolean(False))
 
 
 def run(file_name: str, text: str) -> tuple[Any, Any]:

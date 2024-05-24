@@ -1,5 +1,7 @@
 from __future__ import annotations
 from abc import ABC
+import os
+import random
 from typing import Self
 from fxparser import *
 import sys
@@ -152,7 +154,7 @@ class Value(ABC):
     def notted(self) -> tuple[Boolean, None] | tuple[None, Optional[RTError]]:
         return None, self.illegal_operation()
 
-    def execute(self, args: list[Value]):
+    def execute(self, args: list[Value], context: Context):
         return RTResult().failure(self.illegal_operation())
 
     def copy(self) -> Self:
@@ -364,6 +366,7 @@ class Number(Value):
         return str(self.value)
 
 
+Null = Number(0)
 class String(Value):
     def __init__(self, value: str):
         super().__init__()
@@ -507,6 +510,185 @@ class List(Value):
     def __repr__(self):
         return f"{', '.join(repr(x) for x in self.elements)}"
 
+class BaseFunction(Value):
+    def __init__(self, name: str):
+        super().__init__()
+        self.name = name
+
+    def generate_new_context(self, context:Context) -> Context:
+        new_context = Context(self.name, context, self.pos_start)
+        new_context.symbol_table = SymbolTable(context.symbol_table) # type: ignore
+        return new_context
+    
+    def check_args(self, arg_names: list[str], args: list[Value]):
+        res = RTResult()
+        
+        if len(args) > len(arg_names):
+            return res.failure(RTError(self.pos_start, self.pos_end, f"{len(args) - len(arg_names)} too many args passed into '{self.name}'", self.context))
+        
+        if len(args) < len(arg_names):
+            return res.failure(RTError(self.pos_start, self.pos_end, f"{len(arg_names) - len(args)} too few args passed into '{self.name}'", self.context))
+        
+        return res.success(None)
+    
+    def populate_args(self, arg_names: list[str], args: list[Value], exec_ctx: Context):
+        for i in range(len(args)):
+            arg_name = arg_names[i]
+            arg_value = args[i]
+            arg_value.set_context(exec_ctx)
+            exec_ctx.symbol_table.set(arg_name, arg_value) # type: ignore
+            
+    def check_and_populate_args(self, arg_names: list[str], args: list[Value], exec_ctx: Context):
+        res = RTResult()
+        res.register(self.check_args(arg_names, args))
+        if res.error:
+            return res
+        self.populate_args(arg_names, args, exec_ctx)
+        return res.success(None)
+    
+    def __str__(self):
+        return f"<function {self.name}>"
+    
+    def __repr__(self):
+        return f"<function {self.name}>"
+    
+class Function(BaseFunction):
+    def __init__(self, name: str, body_node: Any, arg_names: list[str], auto_return: bool = False):
+        super().__init__(name)
+        self.body_node = body_node
+        self.arg_names = arg_names
+        self.auto_return = auto_return
+        
+    def execute(self, args: list[Value], context: Context):
+        res = RTResult()
+        interpreter = Interpreter(self.generate_new_context(context))
+        res.register(self.check_and_populate_args(self.arg_names, args, interpreter.context))
+        if res.error:
+            return res
+        value = res.register(interpreter.visit(self.body_node))
+        if res.error:
+            return res
+        return_value = (value if self.auto_return else None) or res.func_return_value or Number(0)
+        
+        return res.success(return_value)
+    
+    def copy(self):
+        copy = Function(self.name, self.body_node, self.arg_names, self.auto_return)
+        copy.set_context(self.context)
+        copy.set_pos(self.pos_start, self.pos_end)
+        return copy
+    
+class BuiltInFunction(BaseFunction):
+    def __init__(self, name: str):
+        super().__init__(name)
+        
+    def execute(self, args: list[Value], context: Context):
+        res = RTResult()
+        exec_ctx = self.generate_new_context(context)
+        
+        method_name = f"execute_{self.name}"
+        method = getattr(self, method_name, self.no_visit_method)
+        
+        res.register(self.check_and_populate_args(method.arg_names, args, exec_ctx)) # type: ignore
+        if res.should_return():
+            return res
+        
+        return_value = res.register(method(exec_ctx)) # type: ignore
+        if res.should_return():
+            return res
+        
+        return res.success(return_value)
+    
+    def no_visit_method(self, node: Any, context: Context):
+        raise Exception(f"No execute_{self.name} method defined")
+    
+    def copy(self):
+        copy = BuiltInFunction(self.name)
+        copy.set_context(self.context)
+        copy.set_pos(self.pos_start, self.pos_end)
+        return copy
+    
+    def execute_print(self, exec_ctx: Context):
+        print(str(exec_ctx.symbol_table.get("value")), end="") # type: ignore
+        return RTResult().success(Null)
+    
+    execute_print.arg_names = ["value"] # type: ignore
+    
+    def execute_input(self, exec_ctx: Context):
+        text = input()
+        return RTResult().success(String(text))
+    
+    execute_input.arg_names = [] # type: ignore
+    
+    def execute_clear(self, exec_ctx: Context):
+        os.system("cls" if os.name == "nt" else "clear")
+        return RTResult().success(Null)
+    
+    execute_clear.arg_names = [] # type: ignore
+    
+    def execute_type(self, exec_ctx: Context):
+        value = exec_ctx.symbol_table.get("value") # type: ignore
+        return RTResult().success(String(type(value).__name__))
+
+    execute_type.arg_names = ["value"] # type: ignore
+    
+    def execute_len(self, exec_ctx: Context):
+        value = exec_ctx.symbol_table.get("value") # type: ignore
+        if isinstance(value, String):
+            return RTResult().success(Number(len(value.value)))
+        elif isinstance(value, List):
+            return RTResult().success(Number(len(value.elements)))
+        else:
+            return RTResult().failure(RTError(self.pos_start, self.pos_end, "Argument must be string or list", exec_ctx))
+        
+    execute_len.arg_names = ["value"] # type: ignore
+    
+    def execute_eval(self, exec_ctx: Context):
+        value = exec_ctx.symbol_table.get("value") # type: ignore
+        if not isinstance(value, String):
+            return RTResult().failure(RTError(self.pos_start, self.pos_end, "Argument must be string", exec_ctx))
+        try:
+            return RTResult().success(eval(value)) # type: ignore
+        except Exception as e:
+            return RTResult().failure(RTError(self.pos_start, self.pos_end, f"Invalid expression: {e}", exec_ctx))
+
+    execute_eval.arg_names = ["value"] # type: ignore
+    
+    def execute_convert(self, exec_ctx: Context):
+        value = exec_ctx.symbol_table.get("value") # type: ignore
+        to = exec_ctx.symbol_table.get("to") # type: ignore
+        if not isinstance(to, String):
+            return RTResult().failure(RTError(self.pos_start, self.pos_end, "Conversion type must be string", exec_ctx))
+        if to == "string": # type: ignore
+            return RTResult().success(String(str(value)))
+        elif to == "number": # type: ignore
+            try:
+                return RTResult().success(Number(int(value))) # type: ignore
+            except:
+                return RTResult().failure(RTError(self.pos_start, self.pos_end, "Invalid conversion", exec_ctx))
+        elif to == "boolean": # type: ignore
+            return RTResult().success(Boolean(value.is_true())) # type: ignore
+        else:
+            return RTResult().failure(RTError(self.pos_start, self.pos_end, "Invalid conversion", exec_ctx))
+        
+    execute_convert.arg_names = ["value", "to"] # type: ignore
+    
+    def execute_random(self, exec_ctx: Context):
+        value = exec_ctx.symbol_table.get("value") # type: ignore
+        count = exec_ctx.symbol_table.get("count") # type: ignore
+        if isinstance(value, List):
+            return RTResult().success(random.choices(value.elements, k=count.value)) # type: ignore
+        else:
+            return RTResult().failure(RTError(self.pos_start, self.pos_end, "Argument must be list", exec_ctx))
+        
+    
+    execute_random.arg_names = ["value", "count"] # type: ignore
+    
+    def execute_exit(self, exec_ctx: Context):
+        sys.exit()
+        return RTResult().success(Null)
+
+            
 
 #######################################
 # CONTEXT
@@ -553,6 +735,20 @@ class SymbolTable:
         copy.symbols = self.symbols.copy()
         return copy
 
+global_symbol_table = SymbolTable()
+
+global_symbol_table.set("Null", Number(0))
+global_symbol_table.set("True", Boolean(True))
+global_symbol_table.set("False", Boolean(False))
+global_symbol_table.set("print", BuiltInFunction("print"))
+global_symbol_table.set("input", BuiltInFunction("input"))
+global_symbol_table.set("type", BuiltInFunction("type"))
+global_symbol_table.set("clear", BuiltInFunction("clear"))
+global_symbol_table.set("len", BuiltInFunction("len"))
+global_symbol_table.set("exit", BuiltInFunction("exit"))
+global_symbol_table.set("eval", BuiltInFunction("eval"))
+global_symbol_table.set("convert", BuiltInFunction("convert"))
+global_symbol_table.set("random", BuiltInFunction("random"))
 
 #######################################
 # INTERPRETER
@@ -575,6 +771,11 @@ class Interpreter:
             "WhileNode": self.visit_WhileNode,
             "BreakNode": self.visit_BreakNode,
             "ContinueNode": self.visit_ContinueNode,
+            "FunctionDefNode": self.visit_FuncDefNode,
+            "FunctionCallNode": self.visit_FuncCallNode,
+            "ReturnNode": self.visit_ReturnNode,
+            "ImportNode": self.visit_ImportNode,
+            "FromImportNode": self.visit_FromImportNode,
         }
 
     def visit(self, node: Any, context: Optional[Context] = None):
@@ -776,3 +977,142 @@ class Interpreter:
 
     def visit_ContinueNode(self, node: ContinueNode, context: Context):
         return RTResult().success_continue()
+
+    def visit_FuncDefNode(self, node: FuncDefNode, context: Context):
+        res = RTResult()
+        func_name:str = node.var_name_tok.value  # type: ignore
+        body_node = node.body_node
+        arg_names:list[str] = [arg_name.value for arg_name in node.arg_name_toks] # type: ignore
+        func_value = Function(func_name, body_node, arg_names).set_context(context).set_pos(node.pos_start, node.pos_end)
+        context.symbol_table.set(func_name, func_value) # type: ignore
+        return res.success(func_value)
+    
+    def visit_FuncCallNode(self, node: FuncCallNode, context: Context):
+        res = RTResult()
+        args:list[Any] = []
+        
+        value_to_call = res.register(self.visit(node.node_to_call, context))
+        if not value_to_call:
+            return res.failure(RTError(node.pos_start, node.pos_end, "Function not defined", context))
+        for arg_node in node.arg_nodes:
+            args.append(res.register(self.visit(arg_node, context)))
+            if res.should_return():
+                return res
+    
+        return_value = res.register(value_to_call.execute(args, context))
+        if res.should_return():
+            return res
+        return_value = return_value.copy().set_pos(node.pos_start, node.pos_end).set_context(context)  # type: ignore function always returns a value or Null
+        
+        return res.success(return_value)
+    
+    def visit_ReturnNode(self, node: ReturnNode, context: Context):
+        res = RTResult()
+        if node.node_to_return:
+            value = res.register(self.visit(node.node_to_return, context))
+            if res.should_return():
+                return res
+        else:
+            value = Number(0)
+        return res.success_return(value) # type: ignore
+         
+    def visit_ImportNode(self, node: ImportNode, context: Context):
+        res = RTResult()
+        module = node.module_name.value
+        
+        file = module.replace('.', '/') # type: ignore
+        file += ".fx"   # type: ignore
+        try:
+            with open(file, "r") as f: # type: ignore
+                script = f.read()
+        except:
+            return res.failure(RTError(node.pos_start, node.pos_end, f"Module '{module}' not found", context)) # type: ignore
+        lexer = Lexer(file, script) # type: ignore
+        tokens, error = lexer.make_tokens()
+        
+        if error:
+            return res.failure(error) # type: ignore
+        
+        parser = Parser(tokens) # type: ignore
+        ast = parser.parse()
+        
+        if ast.error:
+            return res.failure(ast.error) # type: ignore
+        execcontext = Context(file) # type: ignore
+        execcontext.symbol_table = global_symbol_table
+
+        interpreter = Interpreter(execcontext)
+        value = interpreter.visit(ast.node) # type: ignore
+        
+        if value.error:
+            return res.failure(value.error)
+
+        alias = node.alias.value or module
+        
+        
+        symbols:dict[str, str] = {
+            f"{alias}.{key}": value for key, value in interpreter.context.symbol_table.symbols.items() # type: ignore
+        }
+        
+        context.symbol_table.symbols.update(symbols) # type: ignore
+        print(context.symbol_table.symbols) # type: ignore
+        
+        return res.success(value.value)
+    
+    def visit_FromImportNode(self, node: FromImportNode, context: Context):
+        res = RTResult()
+        module = node.module_name.value
+        
+        file:str = module.replace('.', '/') # type: ignore
+        file += ".fx" # type: ignore
+        try:
+            with open(file, "r") as f: # type: ignore
+                script = f.read()
+        except:
+            return res.failure(RTError(node.pos_start, node.pos_end, f"Module '{module}' not found", context))
+            
+        lexer = Lexer(file, script) # type: ignore
+        tokens, error = lexer.make_tokens()
+        
+        if error:
+            return res.failure(error) # type: ignore
+        
+        parser = Parser(tokens) # type: ignore
+        ast = parser.parse()
+        
+        if ast.error:
+            return res.failure(ast.error) # type: ignore
+        
+        context = Context(file, context) # type: ignore
+        context.symbol_table = global_symbol_table
+        
+        interpreter = Interpreter(context)
+        value = interpreter.visit(ast.node)
+        
+        if value.error:
+            return res.failure(value.error) # type: ignore
+        
+        modulesymbols = interpreter.context.symbol_table.symbols # type: ignore
+        
+        functions = node.functions
+        
+        symbols = {}
+        
+        for function in functions:
+            if function[0].value in modulesymbols:
+                alias = function[1].value if function[1] else None
+                if not alias:
+                    alias = function[0].value
+                
+                symbols[f"{alias}"] = modulesymbols[function[0].value]
+                
+        self.context.symbol_table.symbols.update(symbols) # type: ignore
+        
+        return res.success(value.value)
+            
+        
+
+        
+        
+            
+    
