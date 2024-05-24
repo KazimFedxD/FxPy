@@ -20,8 +20,10 @@ if len(sys.argv) > 1:
         sys.exit()
 
 while running:
-    text = input("FxPy>>> ")
-
+    try:
+        text = input("FxPy>>> ")
+    except KeyboardInterrupt:
+        continue
 
     result, error = run.run("<stdin>", text)
 
@@ -30,10 +32,14 @@ while running:
         continue
     if result:
         result = repr(result)
-        if result.endswith("0"):
-            print(result[:-1])
+        if result == "0":
+            print()
         else:
             print(result)
 
     if text.strip() == "exit()":
         break
+    
+    
+print("Goodbye!")
+    

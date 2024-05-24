@@ -19,7 +19,7 @@ class RTResult:
 
     def reset(self):
         self.value: Optional[Value] = None
-        self.error: Optional[RTError] = None
+        self.error: Optional[Error] = None
         self.func_return_value: Optional[Value] = None
         self.loop_should_continue: bool = False
         self.loop_should_break: bool = False
@@ -36,9 +36,9 @@ class RTResult:
         self.value = value
         return self
 
-    def failure(self, error: RTError | None):
+    def failure(self, error: Error | None):
         self.reset()
-        self.error = error
+        self.error = error 
         return self
 
     def success_return(self, value: "Value"):
@@ -261,9 +261,11 @@ class Number(Value):
         super().__init__()
         self.value = value
 
-    def added_to(self, other: Value):
+    def added_to(self, other: Value): # type: ignore
         if isinstance(other, Number):
             return Number(self.value + other.value).set_context(self.context), None
+        elif isinstance(other, String):
+            return String(str(self.value) + other.value).set_context(self.context), None 
         else:
             return None, Value.illegal_operation(self, other)
 
@@ -510,6 +512,65 @@ class List(Value):
     def __repr__(self):
         return f"{', '.join(repr(x) for x in self.elements)}"
 
+class Dictionary(Value):
+    def __init__(self, elements: dict[str|int, Value]):
+        super().__init__()
+        self.elements = elements
+        
+    def added_to(self, other: Value):
+        if isinstance(other, Dictionary):
+            return Dictionary({**self.elements, **other.elements}).set_context(self.context), None
+        else:
+            return None, Value.illegal_operation(self, other)
+        
+    def subbed_by(self, other: Value):
+        if isinstance(other, String):
+            try:
+                del self.elements[other.value]
+                return self, None
+            except:
+                return None, RTError(other.pos_start, other.pos_end, "Key not found", self.context)
+        else:
+            return None, Value.illegal_operation(self, other)
+        
+    def dived_by(self, other: Value): # type: ignore
+        if isinstance(other, String):
+            try:
+                return self.elements[other.value], None
+            except:
+                return None, RTError(other.pos_start, other.pos_end, "Key not found", self.context)
+        else:
+            return None, Value.illegal_operation(self, other)
+        
+    def get_comparison_eq(self, other: Dictionary):
+        return Boolean(self.elements == other.elements).set_context(self.context), None
+    
+    def get_comparison_ne(self, other: Dictionary):
+        return Boolean(self.elements != other.elements).set_context(self.context), None
+    
+    def is_true(self):
+        return len(self.elements) > 0
+    
+    def copy(self):
+        copy = Dictionary(self.elements.copy())
+        copy.set_pos(self.pos_start, self.pos_end)
+        copy.set_context(self.context)
+        return copy
+    
+    def __str__(self):
+        return f"{{{', '.join(f'{k}: {v}' for k, v in self.elements.items())}}}"
+    
+    def __repr__(self):
+        return f"{{{', '.join(f'{k}: {repr(v)}' for k, v in self.elements.items())}}}"
+    
+    
+    
+    
+
+
+#######################################
+# FUNCTIONS
+#######################################
 class BaseFunction(Value):
     def __init__(self, name: str):
         super().__init__()
@@ -659,12 +720,13 @@ class BuiltInFunction(BaseFunction):
         to = exec_ctx.symbol_table.get("to") # type: ignore
         if not isinstance(to, String):
             return RTResult().failure(RTError(self.pos_start, self.pos_end, "Conversion type must be string", exec_ctx))
-        if to == "string": # type: ignore
+        if to.value == "string":
             return RTResult().success(String(str(value)))
-        elif to == "number": # type: ignore
+        elif to.value == "number": 
             try:
-                return RTResult().success(Number(int(value))) # type: ignore
-            except:
+                return RTResult().success(Number(int(value.value))) # type: ignore
+            except Exception as e:
+                print(e)
                 return RTResult().failure(RTError(self.pos_start, self.pos_end, "Invalid conversion", exec_ctx))
         elif to == "boolean": # type: ignore
             return RTResult().success(Boolean(value.is_true())) # type: ignore
@@ -686,7 +748,6 @@ class BuiltInFunction(BaseFunction):
     
     def execute_exit(self, exec_ctx: Context):
         sys.exit()
-        return RTResult().success(Null)
 
             
 
@@ -776,6 +837,7 @@ class Interpreter:
             "ReturnNode": self.visit_ReturnNode,
             "ImportNode": self.visit_ImportNode,
             "FromImportNode": self.visit_FromImportNode,
+            "DictNode": self.visit_DictNode,
         }
 
     def visit(self, node: Any, context: Optional[Context] = None):
@@ -1020,29 +1082,32 @@ class Interpreter:
         res = RTResult()
         module = node.module_name.value
         
-        file = module.replace('.', '/') # type: ignore
-        file += ".fx"   # type: ignore
+        if not isinstance(module, str):
+            return
+        file = module.replace('.', '/') 
+        file += ".fx"  
         try:
-            with open(file, "r") as f: # type: ignore
+            with open(file, "r") as f: 
                 script = f.read()
         except:
-            return res.failure(RTError(node.pos_start, node.pos_end, f"Module '{module}' not found", context)) # type: ignore
-        lexer = Lexer(file, script) # type: ignore
+            return res.failure(RTError(node.pos_start, node.pos_end, f"Module '{module}' not found", context))  # type: ignore
+        lexer = Lexer(file, script)
         tokens, error = lexer.make_tokens()
         
         if error:
-            return res.failure(error) # type: ignore
-        
-        parser = Parser(tokens) # type: ignore
+            return res.failure(error) 
+        if not tokens:
+            return res.failure(RTError(node.pos_start, node.pos_end, f"Module '{module}' is empty", context)) # type: ignore
+        parser = Parser(tokens) 
         ast = parser.parse()
         
         if ast.error:
-            return res.failure(ast.error) # type: ignore
-        execcontext = Context(file) # type: ignore
-        execcontext.symbol_table = global_symbol_table
+            return res.failure(ast.error) 
+        execcontext = Context(file)
+        execcontext.symbol_table = global_symbol_table.copy()
 
         interpreter = Interpreter(execcontext)
-        value = interpreter.visit(ast.node) # type: ignore
+        value = interpreter.visit(ast.node) 
         
         if value.error:
             return res.failure(value.error)
@@ -1061,35 +1126,37 @@ class Interpreter:
     def visit_FromImportNode(self, node: FromImportNode, context: Context):
         res = RTResult()
         module = node.module_name.value
-        
-        file:str = module.replace('.', '/') # type: ignore
-        file += ".fx" # type: ignore
+        if not isinstance(module, str):
+            return
+        file:str = module.replace('.', '/')
+        file += ".fx"
         try:
-            with open(file, "r") as f: # type: ignore
+            with open(file, "r") as f:
                 script = f.read()
         except:
             return res.failure(RTError(node.pos_start, node.pos_end, f"Module '{module}' not found", context))
             
-        lexer = Lexer(file, script) # type: ignore
+        lexer = Lexer(file, script) 
         tokens, error = lexer.make_tokens()
         
         if error:
-            return res.failure(error) # type: ignore
-        
-        parser = Parser(tokens) # type: ignore
+            return res.failure(error) 
+        if not tokens:
+            return res.failure(RTError(node.pos_start, node.pos_end, f"Module '{module}' is empty", context))
+        parser = Parser(tokens) 
         ast = parser.parse()
         
         if ast.error:
-            return res.failure(ast.error) # type: ignore
+            return res.failure(ast.error) 
         
-        context = Context(file, context) # type: ignore
+        context = Context(file, context) 
         context.symbol_table = global_symbol_table
         
         interpreter = Interpreter(context)
         value = interpreter.visit(ast.node)
         
         if value.error:
-            return res.failure(value.error) # type: ignore
+            return res.failure(value.error) 
         
         modulesymbols = interpreter.context.symbol_table.symbols # type: ignore
         
@@ -1109,7 +1176,23 @@ class Interpreter:
         
         return res.success(value.value)
             
-        
+    def visit_DictNode(self, node: DictNode, context: Context):
+        res = RTResult()
+        elements:dict[str|int, Value] = {}
+        for key, value in node.key_value_pairs.items():
+            key:Value|None = res.register(self.visit(key, context))
+            if res.should_return():
+                return res
+            if not isinstance(key, String):
+                return res.failure(RTError(node.pos_start, node.pos_end, "Dictionary keys must be strings", context))
+            
+            elements[key.value] = res.register(self.visit(value, context)) # type: ignore
+
+            if res.should_return():
+                return res
+        return res.success(
+            Dictionary(elements).set_context(context).set_pos(node.pos_start, node.pos_end)
+        )
 
         
         

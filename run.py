@@ -1,6 +1,6 @@
 from interpreter import *
 
-
+global_symbol_table = global_symbol_table.copy()
 
 def run(file_name: str, text: str) -> tuple[Any, Any]:
     lexer = Lexer(file_name, text)
@@ -15,7 +15,6 @@ def run(file_name: str, text: str) -> tuple[Any, Any]:
 
     context = Context("<program>")
     context.symbol_table = global_symbol_table
-
     interpreter = Interpreter(context)
     result = interpreter.visit(ast.node)
 
