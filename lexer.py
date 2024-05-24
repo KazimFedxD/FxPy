@@ -56,30 +56,8 @@ RESERVED_KEYWORDS = [
     
 ]
 
-class Position:
-    def __init__(self, idx, ln, col, fn, ftxt):
-        self.idx = idx
-        self.ln = ln
-        self.col = col
-        self.fn = fn
-        self.ftxt = ftxt
-
-    def advance(self, current_char=None):
-        self.idx += 1
-        self.col += 1
-
-        if current_char == "\n":
-            self.ln += 1
-            self.col = 0
-
-        return self
-
-    def copy(self):
-        return Position(self.idx, self.ln, self.col, self.fn, self.ftxt)
-
-
 class Token:
-    def __init__(self, type_, value=None, pos_start=None, pos_end=None):
+    def __init__(self, type_:str, value:Optional[str|int|float]=None, pos_start:Optional[Position]=None, pos_end:Optional[Position]=None):
         self.type = type_
         self.value = value
         
@@ -91,14 +69,14 @@ class Token:
         if pos_end:
             self.pos_end = pos_end.copy()
             
-    def matches(self, type_, value) -> bool:
+    def matches(self, type_:str, value:str) -> bool:
         return self.type == type_ and self.value == value
         
     def __repr__(self):
         return self.type + (f':{self.value}' if self.value != None else '')
      
 class Lexer:
-    def __init__(self, file_name, text):
+    def __init__(self, file_name:str, text:str):
         self.file_name = file_name
         self.text = text
         self.pos = Position(-1, 0, -1, file_name, text)
@@ -109,8 +87,8 @@ class Lexer:
         self.pos.advance(self.current_char)
         self.current_char = self.text[self.pos.idx] if self.pos.idx < len(self.text) else None
         
-    def make_tokens(self):
-        tokens = []        
+    def make_tokens(self) -> tuple[Optional[list[Token]], Optional[Error]]:
+        tokens:list[Token] = []        
         while self.current_char != None:
             if self.current_char in ' \t':
                 self.advance()
@@ -183,7 +161,7 @@ class Lexer:
         return tokens, None
             
     def make_number(self):
-        num_str = ''
+        num_str:str = ''
         dot_count = 0
         pos_start = self.pos.copy()
         

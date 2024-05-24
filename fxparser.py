@@ -1,3 +1,4 @@
+from typing import Any, Callable, Self
 from lexer import *
 
 #######################################
@@ -15,7 +16,7 @@ class NumberNode:
         return f'{self.tok}'
     
 class BinOpNode:
-    def __init__(self, left_node, op_tok:Token, right_node):
+    def __init__(self, left_node:Any["Node"], op_tok:Token, right_node:Any["Node"]):
         self.left_node = left_node
         self.op_tok = op_tok
         self.right_node = right_node
@@ -27,7 +28,7 @@ class BinOpNode:
         return f'({self.left_node}, {self.op_tok}, {self.right_node})'
     
 class UnaryOpNode:
-    def __init__(self, op_tok:Token, node):
+    def __init__(self, op_tok:Token, node:Any["Node"]):
         self.op_tok = op_tok
         self.node = node
 
@@ -38,7 +39,7 @@ class UnaryOpNode:
         return f'({self.op_tok}, {self.node})'
 
 class VarAccessNode:
-    def __init__(self, var_name_tok):
+    def __init__(self, var_name_tok:Token):
         self.var_name_tok = var_name_tok
 
         self.pos_start = self.var_name_tok.pos_start
@@ -48,7 +49,7 @@ class VarAccessNode:
         return f'{self.var_name_tok} ACCESS'
 
 class VarAssignNode:
-    def __init__(self, var_name_tok, value_node):
+    def __init__(self, var_name_tok:Token, value_node:Any["Node"]):
         self.var_name_tok = var_name_tok
         self.value_node = value_node
 
@@ -69,7 +70,7 @@ class StringNode:
         return f'{self.tok}'
 
 class ReturnNode:
-    def __init__(self, node_to_return, pos_start, pos_end):
+    def __init__(self, node_to_return:Any["Node"], pos_start:Position, pos_end:Position):
         self.node_to_return = node_to_return
         self.pos_start = pos_start
         self.pos_end = pos_end
@@ -78,7 +79,7 @@ class ReturnNode:
         return f'return {self.node_to_return}'
 
 class ContinueNode:
-    def __init__(self, pos_start, pos_end):
+    def __init__(self, pos_start:Position, pos_end:Position):
         self.pos_start = pos_start
         self.pos_end = pos_end
 
@@ -86,7 +87,7 @@ class ContinueNode:
         return f'continue'
     
 class BreakNode:
-    def __init__(self, pos_start, pos_end):
+    def __init__(self, pos_start:Position, pos_end:Position):
         self.pos_start = pos_start
         self.pos_end = pos_end
     
@@ -94,18 +95,19 @@ class BreakNode:
         return f'break'
         
 class IfNode:
-    def __init__(self, cases, else_case):
+    ## cases: list of tuple of condition and statements || Can be Any["Node"]
+    def __init__(self, cases:list[tuple[BinOpNode,BinOpNode]], else_case:Optional[BinOpNode]):
         self.cases = cases
         self.else_case = else_case
 
         self.pos_start = self.cases[0][0].pos_start
-        self.pos_end = (self.else_case or self.cases[-1][0]).pos_end
+        self.pos_end:Any["Position"] = (self.else_case or self.cases[-1][0]).pos_end
 
     def __repr__(self):
         return f'if {self.cases}'
 
 class ListNode:
-    def __init__(self, element_nodes, pos_start, pos_end):
+    def __init__(self, element_nodes:Any["Node"], pos_start:Position, pos_end:Position):
         self.element_nodes = element_nodes
         self.pos_start = pos_start
         self.pos_end = pos_end
@@ -114,7 +116,7 @@ class ListNode:
         return f'{self.element_nodes}'
 
 class ForNode:
-    def __init__(self, var_name_tok, start_value_node, end_value_node, step_value_node, body_node):
+    def __init__(self, var_name_tok:Token, start_value_node:Any["Node"], end_value_node:Any["Node"], step_value_node:Any["Node"], body_node:BinOpNode):
         self.var_name_tok = var_name_tok
         self.start_value_node = start_value_node
         self.end_value_node = end_value_node
@@ -122,13 +124,10 @@ class ForNode:
         self.body_node = body_node
 
         self.pos_start = self.var_name_tok.pos_start
-        self.pos_end = self.body_node.pos_end
+        self.pos_end:Position = self.body_node.pos_end
         
-    def __repr__(self):
-        f"for {self.var_name_tok} = {self.start_value_node} to {self.end_value_node} step {self.step_value_node} {self.body_node}"
-
 class WhileNode:
-    def __init__(self, condition_node, body_node):
+    def __init__(self, condition_node:Any["Node"], body_node:Any["Node"]):
         self.condition_node = condition_node
         self.body_node = body_node
 
@@ -139,7 +138,7 @@ class WhileNode:
         return f'while {self.condition_node} {self.body_node}'
 
 class FuncDefNode:
-    def __init__(self, var_name_tok, arg_name_toks, body_node):
+    def __init__(self, var_name_tok:Optional[Token], arg_name_toks:list[Token], body_node:Any["Node"]):
         self.var_name_tok = var_name_tok
         self.arg_name_toks = arg_name_toks
         self.body_node = body_node
@@ -157,7 +156,7 @@ class FuncDefNode:
         return f'fex {self.var_name_tok}({self.arg_name_toks}) -> {self.body_node}'
 
 class FuncCallNode:
-    def __init__(self, node_to_call, arg_nodes):
+    def __init__(self, node_to_call:Any["Node"], arg_nodes:list[Any["Node"]]):
         self.node_to_call = node_to_call
         self.arg_nodes = arg_nodes
 
@@ -177,8 +176,8 @@ class FuncCallNode:
 
 class ParseResult:
     def __init__(self):
-        self.error = None
-        self.node = None
+        self.error:Optional[Error] = None
+        self.node:Optional[Any["Node"]] = None
         self.last_registered_advance_count = 0
         self.to_reverse_count = 0
         self.advance_count = 0
@@ -187,24 +186,24 @@ class ParseResult:
         self.last_registered_advance_count = 1
         self.advance_count += 1
 
-    def register(self, res):
+    def register(self, res: Self) -> Any["Node"]:
         self.last_registered_advance_count = res.advance_count
         self.advance_count += res.advance_count
         if res.error:
             self.error = res.error
         return res.node
 
-    def try_register(self, res):
+    def try_register(self, res: Self):
         if res.error:
             self.to_reverse_count = res.advance_count
             return None
         return self.register(res)
 
-    def success(self, node):
+    def success(self, node:Any["Node"]):
         self.node = node
         return self
 
-    def failure(self, error):
+    def failure(self, error:Error):
         if not self.error or self.last_registered_advance_count == 0:
             self.error = error
         return self
@@ -220,7 +219,7 @@ class Parser:
         self.tok_idx = -1
         self.advance()
         
-    def advance(self):
+    def advance(self) -> Token:
         self.tok_idx += 1
         if self.tok_idx < len(self.tokens):
             self.current_tok = self.tokens[self.tok_idx]
@@ -230,9 +229,9 @@ class Parser:
         res = self.expr()
         return res
     
-    def get_statements(self):
+    def get_statements(self) -> ParseResult: # ParseResult is used to return error
         res = ParseResult()
-        statements = []
+        statements:list[Any["Nodes"]] = []
         pos_start = self.current_tok.pos_start.copy()
         while True:
             while self.current_tok.type == TT_NEWLINE:
@@ -251,6 +250,11 @@ class Parser:
         
         return res.success(ListNode(statements, pos_start, statements[-1].pos_end))
 
+    def reverse(self, amount:int=1) -> Token:
+        self.tok_idx -= amount
+        if self.tok_idx >= 0 and self.tok_idx < len(self.tokens):
+            self.current_tok = self.tokens[self.tok_idx]
+        return self.current_tok
     
     def statement(self):
         res = ParseResult()
@@ -290,7 +294,7 @@ class Parser:
             )
         return res.success(expr)
 
-    def expr(self):
+    def expr(self) -> ParseResult: # ParseResult is used to return error or node
         res = ParseResult()
         if self.current_tok.matches(TT_KEYWORD, "let"):
             res.register_advancement()
@@ -298,7 +302,8 @@ class Parser:
             if self.current_tok.type == TT_IDENTIFIER:
                 varname = self.current_tok
 
-                self.advance()
+                res.register_advancement()
+                self.current_tok = self.advance()
                 
                 if self.current_tok.type == TT_EQ:
                     self.advance()
@@ -320,7 +325,7 @@ class Parser:
         
         return res.success(node)
     
-    def comp_expr(self):
+    def comp_expr(self) -> ParseResult: # ParseResult is used to return error or node
         res = ParseResult()
 
         if self.current_tok.type == TT_NOT:
@@ -347,17 +352,17 @@ class Parser:
         return res.success(node)
     
 
-    def arith_expr(self):
+    def arith_expr(self)  -> ParseResult: # ParseResult is used to return error or node
         return self.bin_op(self.mod, ((TT_PLUS, TT_MINUS)))
 
-    def mod(self):
+    def mod(self) -> ParseResult: # ParseResult is used to return error or node
         return self.bin_op(self.term, ((TT_MOD, )))
     
-    def term(self):
+    def term(self)  -> ParseResult: # ParseResult is used to return error or node
         return self.bin_op(self.factor, ((TT_MUL, TT_DIV)))
     
     
-    def factor(self):
+    def factor(self)  -> ParseResult: # ParseResult is used to return error or node
         res = ParseResult()
         tok = self.current_tok
         if tok.type in (TT_PLUS, TT_MINUS):
@@ -368,12 +373,12 @@ class Parser:
             return res.success(UnaryOpNode(tok, factor))
         return self.power()
     
-    def power(self):
+    def power(self)  -> ParseResult: # ParseResult is used to return error or node
         return self.bin_op(self.atom, (TT_POW, ), self.factor)
 
-    def if_expr(self):
+    def if_expr(self)  -> ParseResult: # ParseResult is used to return error or node
         res = ParseResult()
-        cases = []
+        cases:list[Any["Nodes"]] = []
 
         if not self.current_tok.matches(TT_KEYWORD, "if"):
             return res.failure(
@@ -395,7 +400,7 @@ class Parser:
             return res.failure(InvalidSyntaxError(self.current_tok.pos_start, self.current_tok.pos_end, "Expected ':'"))
         
         res.register_advancement()
-        self.advance()
+        self.current_tok = self.advance()
         
         statements = res.register(self.get_statements())
         if res.error:
@@ -405,9 +410,7 @@ class Parser:
         while self.current_tok.type == TT_NEWLINE:
             res.register_advancement()
             self.advance()
-        while self.current_tok.matches(TT_KEYWORD, "elif"):
-            print("ELIF")
-            
+        while self.current_tok.matches(TT_KEYWORD, "elif"):            
             res.register_advancement()
             self.advance()
             
@@ -448,7 +451,7 @@ class Parser:
             
         return res.success(IfNode(cases, else_case))
         
-    def for_expr(self):
+    def for_expr(self)  -> ParseResult: # ParseResult is used to return error or node
         res = ParseResult()
         
         if not self.current_tok.matches(TT_KEYWORD, "for"):
@@ -468,7 +471,7 @@ class Parser:
         
         var_name = self.current_tok
         res.register_advancement()
-        self.advance()
+        self.current_tok = self.advance()
         
         if self.current_tok.type != TT_EQ:
             return res.failure(InvalidSyntaxError(self.current_tok.pos_start, self.current_tok.pos_end, "Expected '='"))
@@ -484,7 +487,7 @@ class Parser:
             return res.failure(InvalidSyntaxError(self.current_tok.pos_start, self.current_tok.pos_end, "Expected 'to'"))
         
         res.register_advancement()
-        self.advance()
+        self.current_tok = self.advance()
         
         end_value = res.register(self.expr())
         if res.error:
@@ -493,7 +496,7 @@ class Parser:
         step_value = NumberNode(Token(TT_INT, 1, self.current_tok.pos_start, self.current_tok.pos_start))
         if self.current_tok.matches(TT_KEYWORD, "step"):
             res.register_advancement()
-            self.advance()
+            self.current_tok = self.advance()
             
             step_value = res.register(self.expr())
             if res.error:
@@ -511,7 +514,7 @@ class Parser:
         
         return res.success(ForNode(var_name, start_value, end_value, step_value, body))
     
-    def while_expr(self):
+    def while_expr(self)  -> ParseResult: # ParseResult is used to return error or node
         res = ParseResult()
         
         if not self.current_tok.matches(TT_KEYWORD, "while"):
@@ -542,15 +545,15 @@ class Parser:
         
         return res.success(WhileNode(condition, body))
     
-    def var_func_access(self):
+    def var_func_access(self)  -> ParseResult: # ParseResult is used to return error or node
         res = ParseResult()
         var_name = self.current_tok
         res.register_advancement()
         self.advance()
         if self.current_tok.type == TT_LPAREN:
-            args = []
+            args:list[Any["Nodes"]] = []
             res.register_advancement()
-            self.advance()
+            self.current_tok = self.advance()
             if self.current_tok.type == TT_RPAREN:
                 res.register_advancement()
                 self.advance()
@@ -571,7 +574,7 @@ class Parser:
             return res.success(FuncCallNode(var_name, args))
         return res.success(VarAccessNode(var_name))
         
-    def func_def(self):
+    def func_def(self) -> ParseResult: # ParseResult is used to return error or node
         res = ParseResult()        
         if not self.current_tok.matches(TT_KEYWORD, "fex"):
             return res.failure(
@@ -586,7 +589,7 @@ class Parser:
         self.advance()
         
         if self.current_tok.type == TT_IDENTIFIER:
-            var_name_tok = self.current_tok
+            var_name_tok:Optional[Token] = self.current_tok
             res.register_advancement()
             self.advance()
         else:
@@ -596,18 +599,18 @@ class Parser:
             return res.failure(InvalidSyntaxError(self.current_tok.pos_start, self.current_tok.pos_end, "Expected '('"))
         
         res.register_advancement()
-        self.advance()
+        self.current_tok = self.advance()
         
-        arg_name_toks = []
+        arg_name_toks:list[Token] = []
         
         if self.current_tok.type == TT_IDENTIFIER:
             arg_name_toks.append(self.current_tok)
             res.register_advancement()
-            self.advance()
+            self.current_tok = self.advance()
             
             while self.current_tok.type == TT_COMMA:
                 res.register_advancement()
-                self.advance()
+                self.current_tok = self.advance()
                 
                 if self.current_tok.type != TT_IDENTIFIER:
                     return res.failure(InvalidSyntaxError(self.current_tok.pos_start, self.current_tok.pos_end, "Expected identifier"))
@@ -620,7 +623,7 @@ class Parser:
             return res.failure(InvalidSyntaxError(self.current_tok.pos_start, self.current_tok.pos_end, "Expected ')' or args"))
         
         res.register_advancement()
-        self.advance()
+        self.current_tok = self.advance()
         
         if  self.current_tok.type == TT_ARROW:
             res.register_advancement()
@@ -642,16 +645,16 @@ class Parser:
             
         return res.success(FuncDefNode(var_name_tok, arg_name_toks, body))
             
-    def list_expr(self):
+    def list_expr(self) -> ParseResult: # ParseResult is used to return error or node
         res = ParseResult()
-        element_nodes = []
+        element_nodes:list[Any["Nodes"]] = []
         pos_start = self.current_tok.pos_start.copy()
         
         if self.current_tok.type != TT_LSQB:
             return res.failure(InvalidSyntaxError(self.current_tok.pos_start, self.current_tok.pos_end, "Expected '['"))
         
         res.register_advancement()
-        self.advance()
+        self.current_tok = self.advance()
         
         if self.current_tok.type == TT_RSQB:
             res.register_advancement()
@@ -743,8 +746,8 @@ class Parser:
         return res.failure(InvalidSyntaxError(tok.pos_start, tok.pos_end, "Expected int or float or '('"))
     
     
-    
-    def bin_op(self, func_a, ops, func_b=None):
+    ## Ops: List of tuple of tuple of token type and value || tuple of token type
+    def bin_op(self, func_a:Callable[[], ParseResult], ops:Any, func_b:Callable[[], ParseResult]|None=None) -> ParseResult:
         func_b = func_b or func_a
         res = ParseResult()
         left = res.register(func_a())
