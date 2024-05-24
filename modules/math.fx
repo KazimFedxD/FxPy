@@ -1,1 +1,1 @@
-fex dev() -> 1/0;
+fex dev() -> 1/0; end

@@ -1055,7 +1055,6 @@ class Interpreter:
         }
         
         context.symbol_table.symbols.update(symbols) # type: ignore
-        print(context.symbol_table.symbols) # type: ignore
         
         return res.success(value.value)
     

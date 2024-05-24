@@ -8,10 +8,8 @@ def run(file_name: str, text: str) -> tuple[Any, Any]:
 
     if error:
         return None, error
-    print(repr(tokens))
     parser = Parser(tokens)  # type: ignore
     ast = parser.parse()
-    print(repr(ast))
     if ast.error:
         return None, ast.error
 
