@@ -13,8 +13,6 @@ class NumberNode:
         self.pos_start = self.tok.pos_start
         self.pos_end = self.tok.pos_end
 
-    def __repr__(self):
-        return f"{self.tok}"
 
 
 class BinOpNode:
@@ -26,8 +24,6 @@ class BinOpNode:
         self.pos_start = self.left_node.pos_start
         self.pos_end = self.right_node.pos_end
 
-    def __repr__(self):
-        return f"({self.left_node}, {self.op_tok}, {self.right_node})"
 
 
 class UnaryOpNode:
@@ -38,8 +34,6 @@ class UnaryOpNode:
         self.pos_start = self.op_tok.pos_start
         self.pos_end = node.pos_end
 
-    def __repr__(self):
-        return f"({self.op_tok}, {self.node})"
 
 
 class VarAccessNode:
@@ -49,8 +43,6 @@ class VarAccessNode:
         self.pos_start = self.var_name_tok.pos_start
         self.pos_end = self.var_name_tok.pos_end
 
-    def __repr__(self):
-        return f"{self.var_name_tok} ACCESS"
 
 
 class VarAssignNode:
@@ -61,8 +53,6 @@ class VarAssignNode:
         self.pos_start = self.var_name_tok.pos_start
         self.pos_end = self.value_node.pos_end
 
-    def __repr__(self):
-        return f"{self.var_name_tok} = {self.value_node}"
 
 
 class StringNode:
@@ -72,8 +62,7 @@ class StringNode:
         self.pos_start = self.tok.pos_start
         self.pos_end = self.tok.pos_end
 
-    def __repr__(self):
-        return f"{self.tok}"
+
 
 
 class ReturnNode:
@@ -84,8 +73,6 @@ class ReturnNode:
         self.pos_start = pos_start
         self.pos_end = pos_end
 
-    def __repr__(self):
-        return f"return {self.node_to_return}"
 
 
 class ContinueNode:
@@ -93,8 +80,7 @@ class ContinueNode:
         self.pos_start = pos_start
         self.pos_end = pos_end
 
-    def __repr__(self):
-        return f"continue"
+
 
 
 class BreakNode:
@@ -102,7 +88,6 @@ class BreakNode:
         self.pos_start = pos_start
         self.pos_end = pos_end
 
-    def __repr__(self):
         return f"break"
 
 
@@ -117,8 +102,6 @@ class IfNode:
         self.pos_start:Position = self.cases[0][0].pos_start
         self.pos_end:Position = (self.else_case or self.cases[-1][0]).pos_end  # type: ignore
 
-    def __repr__(self):
-        return f"if {self.cases}"
 
 
 class ListNode:
@@ -129,8 +112,6 @@ class ListNode:
         self.pos_start = pos_start
         self.pos_end = pos_end
 
-    def __repr__(self):
-        return f"{self.element_nodes}"
 
 
 class ForNode:
@@ -160,15 +141,14 @@ class WhileNode:
         self.pos_start = self.condition_node.pos_start
         self.pos_end = self.body_node.pos_end
 
-    def __repr__(self):
-        return f"while {self.condition_node} {self.body_node}"
+
 
 
 class FuncDefNode:
     def __init__(
         self,
         var_name_tok: Optional[Token],
-        arg_name_toks: list[Token],
+        arg_name_toks: list[tuple[Token|str, bool, Any]],
         body_node: Any,
     ):
         self.var_name_tok = var_name_tok
@@ -178,14 +158,12 @@ class FuncDefNode:
         if self.var_name_tok:
             self.pos_start = self.var_name_tok.pos_start
         elif len(self.arg_name_toks) > 0:
-            self.pos_start = self.arg_name_toks[0].pos_start
+            self.pos_start = self.arg_name_toks[0][0].pos_start if isinstance(self.arg_name_toks[0][0], Token) else None
         else:
             self.pos_start = self.body_node.pos_start
 
         self.pos_end = self.body_node.pos_end
 
-    def __repr__(self):
-        return f"fex {self.var_name_tok}({self.arg_name_toks}) -> {self.body_node}"
 
 
 class FuncCallNode:
@@ -200,8 +178,6 @@ class FuncCallNode:
         else:
             self.pos_end = self.node_to_call.pos_end
 
-    def __repr__(self):
-        return f"{self.node_to_call}({self.arg_nodes})"
 
 class ImportNode:
     def __init__(self, module_name: Token, alias: Token|None = None, pos_start: Position|None = None, pos_end: Position|None = None):
@@ -211,8 +187,6 @@ class ImportNode:
         self.pos_start = pos_start or self.module_name.pos_start
         self.pos_end = pos_end or self.alias.pos_ends # type: ignore
 
-    def __repr__(self):
-        return f"import {self.module_name} as {self.alias}"
     
 class FromImportNode:
     def __init__(self, module_name: Token, functions: list[tuple[Token, Token|None]], pos_start: Position, pos_end: Position):
@@ -222,18 +196,13 @@ class FromImportNode:
         self.pos_start = pos_start
         self.pos_end = pos_end
         
-    def __repr__(self):
-        return f"from {self.module_name} import {self.functions}"
 
 class DictNode:
         def __init__(self, key_value_pairs: dict[Any, Any], pos_start: Position, pos_end: Position):
             self.key_value_pairs = key_value_pairs
             self.pos_start = pos_start
             self.pos_end = pos_end
-   
-        def __repr__(self):
-            return f"{self.key_value_pairs}"
-        
+           
 
 #######################################
 # PARSE RESULT
@@ -784,6 +753,7 @@ class Parser:
         self.advance()
 
         if self.current_tok.type == TT_IDENTIFIER:
+            optional_args = False
             var_name_tok: Optional[Token] = self.current_tok
             res.register_advancement()
             self.advance()
@@ -800,13 +770,28 @@ class Parser:
         res.register_advancement()
         self.current_tok = self.advance()
 
-        arg_name_toks: list[Token] = []
+        arg_name_toks: list[tuple[Token|str, bool, Any]] = [] # Any Node
 
         if self.current_tok.type == TT_IDENTIFIER:
-            arg_name_toks.append(self.current_tok)
+            optional_args = False
+            var_name:Token = self.current_tok
             res.register_advancement()
             self.current_tok = self.advance()
 
+            if self.current_tok.type == TT_EQ:
+                res.register_advancement()
+                self.advance()
+                expr = res.register(self.expr())
+                optional_args = True
+                
+                if res.error:
+                    return res
+                
+                arg_name_toks.append((var_name, True, expr))
+            
+            else:
+                arg_name_toks.append((var_name, False, None))
+    
             while self.current_tok.type == TT_COMMA:
                 res.register_advancement()
                 self.current_tok = self.advance()
@@ -819,10 +804,31 @@ class Parser:
                             "Expected identifier",
                         )
                     )
-
-                arg_name_toks.append(self.current_tok)
+                var_name = self.current_tok
                 res.register_advancement()
-                self.advance()
+                self.current_tok = self.advance()
+                
+                
+                if self.current_tok.type == TT_EQ:
+                    res.register_advancement()
+                    self.advance()
+                    expr = res.register(self.expr())
+                    
+                    if res.error:
+                        return res
+                    
+                    arg_name_toks.append((var_name, True, expr))
+                
+                else:
+                    if optional_args:
+                        return res.failure(
+                            InvalidSyntaxError(
+                                self.current_tok.pos_start,
+                                self.current_tok.pos_end,
+                                "Required argument can't follow optional argument",
+                            )
+                        )
+                    arg_name_toks.append((var_name, False, None))
 
         if self.current_tok.type != TT_RPAREN:
             return res.failure(

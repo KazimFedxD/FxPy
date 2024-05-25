@@ -1,25 +1,10 @@
-import modules.math
+from modules.math import root
 
-print("hello\n")
-
-fex add(a, b) -> return a + b
-
-fex sub(a, b):
-    return a - b
-    end
-
-print(add(1, 2) + "\n")
-print(sub(1, 2) + "\n")
+let x = input("Enter a number: ")
 
 
-print("Enter a number: ")
-let x = convert(input(), "number")
+let x = convert(x, "number")
 
-print("Enter another number: ")
-let y = convert(input(), "number")
+let result = root(x)
 
-print("The sum is: " + add(x, y) + "\n")
-print("The difference is: " + sub(x, y) + "\n")
-
-
-
+print(result)

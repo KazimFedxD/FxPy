@@ -352,12 +352,6 @@ class Number(Value):
         else:
             return None, Value.illegal_operation(self, other)
 
-    def copy(self):
-        copy = Number(self.value)
-        copy.set_pos(self.pos_start, self.pos_end)
-        copy.set_context(self.context)
-        return copy
-
     def is_true(self):
         return self.value != 0
 
@@ -366,6 +360,12 @@ class Number(Value):
 
     def __repr__(self):
         return str(self.value)
+    
+    def copy(self):
+        copy = Number(self.value)
+        copy.set_pos(self.pos_start, self.pos_end)
+        copy.set_context(self.context)
+        return copy
 
 
 Null = Number(0)
@@ -581,25 +581,43 @@ class BaseFunction(Value):
         new_context.symbol_table = SymbolTable(context.symbol_table) # type: ignore
         return new_context
     
-    def check_args(self, arg_names: list[str], args: list[Value]):
+    def check_args(self, arg_names: list[tuple[Token|str,bool,Any]], args: list[Value]):
         res = RTResult()
         
+        required = 0
+        
+        for i in range(len(args)):
+            arg = arg_names[i]
+            if not arg[1]:
+                required += 1
+        if len(args) < required:
+            return res.failure(RTError(self.pos_start, self.pos_end, f"{required} arguments required", self.context))
         if len(args) > len(arg_names):
-            return res.failure(RTError(self.pos_start, self.pos_end, f"{len(args) - len(arg_names)} too many args passed into '{self.name}'", self.context))
-        
-        if len(args) < len(arg_names):
-            return res.failure(RTError(self.pos_start, self.pos_end, f"{len(arg_names) - len(args)} too few args passed into '{self.name}'", self.context))
-        
+            return res.failure(RTError(self.pos_start, self.pos_end, f"{len(arg_names)} arguments required", self.context))
         return res.success(None)
     
-    def populate_args(self, arg_names: list[str], args: list[Value], exec_ctx: Context):
-        for i in range(len(args)):
-            arg_name = arg_names[i]
-            arg_value = args[i]
-            arg_value.set_context(exec_ctx)
-            exec_ctx.symbol_table.set(arg_name, arg_value) # type: ignore
+    def populate_args(self, arg_names: list[tuple[Token|str, bool, Value]], args: list[Value], exec_ctx: Context):
+        for i in range(len(arg_names)):
+            arg_name, optional, default_value = arg_names[i]
+            value = Number(0)
+            if len(args) <= i and optional:
+                if default_value:
+                    value = default_value.copy()
+            elif len(args) > i:
+                value = args[i]
+            else:
+                    arg_name = arg_name.value if isinstance(arg_name, Token) else arg_name
+                    return RTResult().failure(RTError(self.pos_start, self.pos_end, f"Missing argument '{arg_name}'", exec_ctx))
+            if not exec_ctx.symbol_table:
+                return RTResult().failure(RTError(self.pos_start, self.pos_end, "Argument name must be string", exec_ctx))
+            if isinstance(arg_name, Token):  
+                if isinstance(arg_name.value, str):
+                    exec_ctx.symbol_table.set(arg_name.value, value)
+            else:
+                exec_ctx.symbol_table.set(arg_name, value)
             
-    def check_and_populate_args(self, arg_names: list[str], args: list[Value], exec_ctx: Context):
+            
+    def check_and_populate_args(self, arg_names: list[tuple[Token|str, bool, Any]], args: list[Value], exec_ctx: Context):
         res = RTResult()
         res.register(self.check_args(arg_names, args))
         if res.error:
@@ -614,7 +632,7 @@ class BaseFunction(Value):
         return f"<function {self.name}>"
     
 class Function(BaseFunction):
-    def __init__(self, name: str, body_node: Any, arg_names: list[str], auto_return: bool = False):
+    def __init__(self, name: str, body_node: Any, arg_names: list[tuple[Token|str, bool, Any]], auto_return: bool = False):
         super().__init__(name)
         self.body_node = body_node
         self.arg_names = arg_names
@@ -670,16 +688,25 @@ class BuiltInFunction(BaseFunction):
         return copy
     
     def execute_print(self, exec_ctx: Context):
-        print(str(exec_ctx.symbol_table.get("value")), end="") # type: ignore
+        if not exec_ctx.symbol_table:
+            return RTResult().failure(RTError(self.pos_start, self.pos_end, "No symbol table", exec_ctx))
+        value = exec_ctx.symbol_table.get("value")
+        ends_with  = exec_ctx.symbol_table.get("ends_with")
+        
+        print(str(value), end=str(ends_with))
+        
         return RTResult().success(Null)
     
-    execute_print.arg_names = ["value"] # type: ignore
+    execute_print.arg_names = [("value", True, String("")), ("ends_with", True, String("\n"))] # type: ignore
     
     def execute_input(self, exec_ctx: Context):
-        text = input()
-        return RTResult().success(String(text))
+        if not exec_ctx.symbol_table:
+            return RTResult().failure(RTError(self.pos_start, self.pos_end, "No symbol table", exec_ctx))
+        text = exec_ctx.symbol_table.get("text")
+        input_value = input(str(text))
+        return RTResult().success(String(input_value))
     
-    execute_input.arg_names = [] # type: ignore
+    execute_input.arg_names = [("text", True, String(""))] # type: ignore
     
     def execute_clear(self, exec_ctx: Context):
         os.system("cls" if os.name == "nt" else "clear")
@@ -691,7 +718,7 @@ class BuiltInFunction(BaseFunction):
         value = exec_ctx.symbol_table.get("value") # type: ignore
         return RTResult().success(String(type(value).__name__))
 
-    execute_type.arg_names = ["value"] # type: ignore
+    execute_type.arg_names = [("value", False, Null)] # type: ignore
     
     def execute_len(self, exec_ctx: Context):
         value = exec_ctx.symbol_table.get("value") # type: ignore
@@ -702,7 +729,7 @@ class BuiltInFunction(BaseFunction):
         else:
             return RTResult().failure(RTError(self.pos_start, self.pos_end, "Argument must be string or list", exec_ctx))
         
-    execute_len.arg_names = ["value"] # type: ignore
+    execute_len.arg_names = [("value", False, Null)] # type: ignore
     
     def execute_eval(self, exec_ctx: Context):
         value = exec_ctx.symbol_table.get("value") # type: ignore
@@ -713,7 +740,7 @@ class BuiltInFunction(BaseFunction):
         except Exception as e:
             return RTResult().failure(RTError(self.pos_start, self.pos_end, f"Invalid expression: {e}", exec_ctx))
 
-    execute_eval.arg_names = ["value"] # type: ignore
+    execute_eval.arg_names = [("value", False, Null)] # type: ignore
     
     def execute_convert(self, exec_ctx: Context):
         value = exec_ctx.symbol_table.get("value") # type: ignore
@@ -733,9 +760,9 @@ class BuiltInFunction(BaseFunction):
         else:
             return RTResult().failure(RTError(self.pos_start, self.pos_end, "Invalid conversion", exec_ctx))
         
-    execute_convert.arg_names = ["value", "to"] # type: ignore
+    execute_convert.arg_names = [("value", False, Null), ("to", True, String("string"))] # type: ignore
     
-    def execute_random(self, exec_ctx: Context):
+    def execute_random_choices(self, exec_ctx: Context):
         value = exec_ctx.symbol_table.get("value") # type: ignore
         count = exec_ctx.symbol_table.get("count") # type: ignore
         if isinstance(value, List):
@@ -744,12 +771,12 @@ class BuiltInFunction(BaseFunction):
             return RTResult().failure(RTError(self.pos_start, self.pos_end, "Argument must be list", exec_ctx))
         
     
-    execute_random.arg_names = ["value", "count"] # type: ignore
+    execute_random_choices.arg_names = [("value", False, Null), ("count", True, Number(1))] # type: ignore
     
     def execute_exit(self, exec_ctx: Context):
         sys.exit()
 
-            
+    execute_exit.arg_names = [] # type: ignore
 
 #######################################
 # CONTEXT
@@ -785,7 +812,7 @@ class SymbolTable:
             return self.parent.get(name)
         return value
 
-    def set(self, name: str, value: Value):
+    def set(self, name: str, value: Value) -> None:
         self.symbols[name] = value
 
     def remove(self, name: str):
@@ -795,6 +822,21 @@ class SymbolTable:
         copy = SymbolTable(self.parent)
         copy.symbols = self.symbols.copy()
         return copy
+
+global_reserved_symbols = [
+    "Null",
+    "True",
+    "False",
+    "print",
+    "input",
+    "type",
+    "clear",
+    "len",
+    "exit",
+    "eval",
+    "convert",
+    "random_choices",
+]
 
 global_symbol_table = SymbolTable()
 
@@ -809,7 +851,7 @@ global_symbol_table.set("len", BuiltInFunction("len"))
 global_symbol_table.set("exit", BuiltInFunction("exit"))
 global_symbol_table.set("eval", BuiltInFunction("eval"))
 global_symbol_table.set("convert", BuiltInFunction("convert"))
-global_symbol_table.set("random", BuiltInFunction("random"))
+global_symbol_table.set("random_choices", BuiltInFunction("random_choices"))
 
 #######################################
 # INTERPRETER
@@ -940,6 +982,15 @@ class Interpreter:
     def visit_VarAssignNode(self, node: VarAssignNode, context: Context):
         res = RTResult()
         var_name = node.var_name_tok.value
+        if var_name in global_reserved_symbols:
+            return res.failure(
+                RTError(
+                    node.pos_start,
+                    node.pos_end,
+                    f"'{var_name}' is a reserved symbol",
+                    context,
+                )
+            )
         value = res.register(self.visit(node.value_node, context))
         if res.should_return():
             return res
@@ -1043,9 +1094,18 @@ class Interpreter:
     def visit_FuncDefNode(self, node: FuncDefNode, context: Context):
         res = RTResult()
         func_name:str = node.var_name_tok.value  # type: ignore
+        if func_name in global_reserved_symbols:
+            return res.failure(
+                RTError(
+                    node.pos_start,
+                    node.pos_end,
+                    f"'{func_name}' is a reserved symbol",
+                    context,
+                )
+            )
         body_node = node.body_node
-        arg_names:list[str] = [arg_name.value for arg_name in node.arg_name_toks] # type: ignore
-        func_value = Function(func_name, body_node, arg_names).set_context(context).set_pos(node.pos_start, node.pos_end)
+        args:list[tuple[Token|str, bool, Any]] = [(arg_name[0], arg_name[1], res.register(self.visit(arg_name[2], context)) if arg_name[1] else None) for arg_name in node.arg_name_toks]
+        func_value = Function(func_name, body_node, args).set_context(context).set_pos(node.pos_start, node.pos_end)
         context.symbol_table.set(func_name, func_value) # type: ignore
         return res.success(func_value)
     
@@ -1121,7 +1181,7 @@ class Interpreter:
         
         context.symbol_table.symbols.update(symbols) # type: ignore
         
-        return res.success(value.value)
+        return res.success(Null)
     
     def visit_FromImportNode(self, node: FromImportNode, context: Context):
         res = RTResult()
@@ -1174,7 +1234,7 @@ class Interpreter:
                 
         self.context.symbol_table.symbols.update(symbols) # type: ignore
         
-        return res.success(value.value)
+        return res.success(Null)
             
     def visit_DictNode(self, node: DictNode, context: Context):
         res = RTResult()
