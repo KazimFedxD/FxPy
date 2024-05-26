@@ -154,7 +154,7 @@ class Value(ABC):
     def notted(self) -> tuple[Boolean, None] | tuple[None, Optional[RTError]]:
         return None, self.illegal_operation()
 
-    def execute(self, args: list[Value], context: Context):
+    def execute(self, args: list[Value], kwargs: dict[str|Token, Value], context: Context):
         return RTResult().failure(self.illegal_operation())
 
     def copy(self) -> Self:
@@ -575,36 +575,81 @@ class BaseFunction(Value):
     def __init__(self, name: str):
         super().__init__()
         self.name = name
+        self.mul_args:Token|None = None
+        self.mul_kwargs:Token|None = None
 
     def generate_new_context(self, context:Context) -> Context:
         new_context = Context(self.name, context, self.pos_start)
         new_context.symbol_table = SymbolTable(context.symbol_table) # type: ignore
         return new_context
     
-    def check_args(self, arg_names: list[tuple[Token|str,bool,Any]], args: list[Value]):
+    def check_args(self, arg_names: list[tuple[Token|str,bool,Any]], args: list[Value], kwargs:dict[str|Token, Value]):
         res = RTResult()
-        
+        for key, _ in kwargs.items():
+            if (key not in [arg[0] for arg in arg_names] and key not in [arg[0].value for arg in arg_names if isinstance(arg[0], Token)]) and not self.mul_kwargs:
+                return res.failure(RTError(self.pos_start, self.pos_end, f"Invalid argument: {key}", self.context))
         required = 0
+        total_args = len(args) + len(kwargs)
         
-        for i in range(len(args)):
+        for i in range(len(arg_names)):
             arg = arg_names[i]
             if not arg[1]:
                 required += 1
-        if len(args) < required:
+        if total_args < required:
             return res.failure(RTError(self.pos_start, self.pos_end, f"{required} arguments required", self.context))
-        if len(args) > len(arg_names):
+        if total_args > len(arg_names) and not self.mul_args and not self.mul_kwargs:
             return res.failure(RTError(self.pos_start, self.pos_end, f"{len(arg_names)} arguments required", self.context))
-        return res.success(None)
+        if len(args) > len(arg_names) and not self.mul_args:
+            return res.failure(RTError(self.pos_start, self.pos_end, f"{required} arguments required", self.context))
+        return res.success(Null)
     
-    def populate_args(self, arg_names: list[tuple[Token|str, bool, Value]], args: list[Value], exec_ctx: Context):
+    
+    def populate_args(self, arg_names: list[tuple[Token|str, bool, Value]], args: list[Value], kwargs:dict[str|Token, Value], exec_ctx: Context):
+        if not exec_ctx.symbol_table:
+            return RTResult().failure(RTError(self.pos_start, self.pos_end, "No symbol table", exec_ctx))
+        usefull_args:dict[Token|str, Value] = {}
+    
+        for i in range(len(arg_names)):
+            arg_name, _, _ = arg_names[i]
+            if isinstance(arg_name, Token):
+                if arg_name in kwargs:
+                    usefull_args[arg_name] = kwargs[arg_name]
+                    kwargs.pop(arg_name)
+                else:
+                    arg_name = str(arg_name.value)
+            else:
+                if arg_name in kwargs:
+                    usefull_args[arg_name] = kwargs[arg_name]
+                    kwargs.pop(arg_name)
+                else:
+                    arg_name = str(arg_name)
+    
+        for key, value in usefull_args.items():
+            if isinstance(key, Token):
+                exec_ctx.symbol_table.set(str(key.value), value)
+            else:
+                exec_ctx.symbol_table.set(key, value)
+        
+        if self.mul_kwargs:
+            new_kwargs:dict[str|int, Value] = {}
+            for key, value in kwargs.items():
+                if isinstance(key, Token):
+                    new_kwargs[str(key.value)] = value
+                else:
+                    new_kwargs[key] = value
+            exec_ctx.symbol_table.set(str(self.mul_kwargs.value), Dictionary(new_kwargs))
+    
         for i in range(len(arg_names)):
             arg_name, optional, default_value = arg_names[i]
+            if isinstance(arg_name, Token):
+                if arg_name.value in kwargs or arg_name in kwargs:
+                    return RTResult().failure(RTError(self.pos_start, self.pos_end, f"Duplicate argument: {arg_name.value}", exec_ctx))
             value = Number(0)
             if len(args) <= i and optional:
                 if default_value:
                     value = default_value.copy()
             elif len(args) > i:
-                value = args[i]
+                value = args.pop(0)
             else:
                     arg_name = arg_name.value if isinstance(arg_name, Token) else arg_name
                     return RTResult().failure(RTError(self.pos_start, self.pos_end, f"Missing argument '{arg_name}'", exec_ctx))
@@ -616,14 +661,18 @@ class BaseFunction(Value):
             else:
                 exec_ctx.symbol_table.set(arg_name, value)
             
+        if self.mul_args and len(args) > 0:
+            exec_ctx.symbol_table.set(str(self.mul_args.value), List(args)) # type: ignore
             
-    def check_and_populate_args(self, arg_names: list[tuple[Token|str, bool, Any]], args: list[Value], exec_ctx: Context):
+        return RTResult().success(Null)
+            
+    def check_and_populate_args(self, arg_names: list[tuple[Token|str, bool, Any]], args: list[Value], kwargs:dict[str|Token, Value], exec_ctx: Context):
         res = RTResult()
-        res.register(self.check_args(arg_names, args))
+        res.register(self.check_args(arg_names, args, kwargs))
         if res.error:
             return res
-        self.populate_args(arg_names, args, exec_ctx)
-        return res.success(None)
+        self.populate_args(arg_names, args, kwargs, exec_ctx)
+        return res.success(Null)
     
     def __str__(self):
         return f"<function {self.name}>"
@@ -632,16 +681,18 @@ class BaseFunction(Value):
         return f"<function {self.name}>"
     
 class Function(BaseFunction):
-    def __init__(self, name: str, body_node: Any, arg_names: list[tuple[Token|str, bool, Any]], auto_return: bool = False):
+    def __init__(self, name: str, body_node: Any, arg_names: list[tuple[Token|str, bool, Any]], mul_args:Token|None, mul_kwargs:Token|None, auto_return: bool = False):
         super().__init__(name)
         self.body_node = body_node
         self.arg_names = arg_names
         self.auto_return = auto_return
+        self.mul_args = mul_args
+        self.mul_kwargs = mul_kwargs
         
-    def execute(self, args: list[Value], context: Context):
+    def execute(self, args: list[Value], kwargs:dict[str|Token, Value], context: Context):
         res = RTResult()
         interpreter = Interpreter(self.generate_new_context(context))
-        res.register(self.check_and_populate_args(self.arg_names, args, interpreter.context))
+        res.register(self.check_and_populate_args(self.arg_names, args, kwargs, interpreter.context))
         if res.error:
             return res
         value = res.register(interpreter.visit(self.body_node))
@@ -652,7 +703,7 @@ class Function(BaseFunction):
         return res.success(return_value)
     
     def copy(self):
-        copy = Function(self.name, self.body_node, self.arg_names, self.auto_return)
+        copy = Function(self.name, self.body_node, self.arg_names, self.mul_args, self.mul_kwargs, self.auto_return)
         copy.set_context(self.context)
         copy.set_pos(self.pos_start, self.pos_end)
         return copy
@@ -661,14 +712,14 @@ class BuiltInFunction(BaseFunction):
     def __init__(self, name: str):
         super().__init__(name)
         
-    def execute(self, args: list[Value], context: Context):
+    def execute(self, args: list[Value], kwargs:dict[str|Token, Value], context: Context):
         res = RTResult()
         exec_ctx = self.generate_new_context(context)
         
         method_name = f"execute_{self.name}"
         method = getattr(self, method_name, self.no_visit_method)
         
-        res.register(self.check_and_populate_args(method.arg_names, args, exec_ctx)) # type: ignore
+        res.register(self.check_and_populate_args(method.arg_names, args, kwargs, exec_ctx)) # type: ignore
         if res.should_return():
             return res
         
@@ -1021,7 +1072,7 @@ class Interpreter:
             if res.should_return():
                 return res
             return res.success(else_value)  # type: ignore
-        return res.success(None)  # type: ignore
+        return res.success(Null) 
 
     def visit_ListNode(self, node: ListNode, context: Context):
         res = RTResult()
@@ -1066,7 +1117,7 @@ class Interpreter:
                 if res.loop_should_break:
                     break
                 return res
-        return res.success(None)
+        return res.success(Null)
 
     def visit_WhileNode(self, node: WhileNode, context: Context):
         res = RTResult()
@@ -1083,7 +1134,7 @@ class Interpreter:
                 if res.loop_should_break:
                     break
                 return res
-        return res.success(None)
+        return res.success(Null)
 
     def visit_BreakNode(self, node: BreakNode, context: Context):
         return RTResult().success_break()
@@ -1105,14 +1156,14 @@ class Interpreter:
             )
         body_node = node.body_node
         args:list[tuple[Token|str, bool, Any]] = [(arg_name[0], arg_name[1], res.register(self.visit(arg_name[2], context)) if arg_name[1] else None) for arg_name in node.arg_name_toks]
-        func_value = Function(func_name, body_node, args).set_context(context).set_pos(node.pos_start, node.pos_end)
+        func_value = Function(func_name, body_node, args, node.mulargs, node.mulkwargs).set_context(context).set_pos(node.pos_start, node.pos_end)
         context.symbol_table.set(func_name, func_value) # type: ignore
         return res.success(func_value)
     
     def visit_FuncCallNode(self, node: FuncCallNode, context: Context):
         res = RTResult()
         args:list[Any] = []
-        
+        kwargs:dict[Any, Any] = {}
         value_to_call = res.register(self.visit(node.node_to_call, context))
         if not value_to_call:
             return res.failure(RTError(node.pos_start, node.pos_end, "Function not defined", context))
@@ -1120,8 +1171,12 @@ class Interpreter:
             args.append(res.register(self.visit(arg_node, context)))
             if res.should_return():
                 return res
+        for kwarg in node.kwargs_nodes:
+            kwargs[kwarg[0].value] = res.register(self.visit(kwarg[1], context))
+            if res.should_return():
+                return res
     
-        return_value = res.register(value_to_call.execute(args, context))
+        return_value = res.register(value_to_call.execute(args, kwargs, context))
         if res.should_return():
             return res
         return_value = return_value.copy().set_pos(node.pos_start, node.pos_end).set_context(context)  # type: ignore function always returns a value or Null

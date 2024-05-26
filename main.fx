@@ -7,4 +7,6 @@ let x = convert(x, "number")
 
 let result = root(x)
 
+# printing the result
+
 print(result)

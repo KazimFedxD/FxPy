@@ -149,11 +149,15 @@ class FuncDefNode:
         self,
         var_name_tok: Optional[Token],
         arg_name_toks: list[tuple[Token|str, bool, Any]],
+        mulargs: Token|None,
+        mulkwargs: Token|None,
         body_node: Any,
     ):
         self.var_name_tok = var_name_tok
         self.arg_name_toks = arg_name_toks
         self.body_node = body_node
+        self.mulargs = mulargs
+        self.mulkwargs = mulkwargs
 
         if self.var_name_tok:
             self.pos_start = self.var_name_tok.pos_start
@@ -167,14 +171,20 @@ class FuncDefNode:
 
 
 class FuncCallNode:
-    def __init__(self, node_to_call: Any, arg_nodes: list[Any]):
+    def __init__(self, node_to_call: Any, arg_nodes: list[Any], kwargs_nodes: list[tuple[Token, Any]] = []):
         self.node_to_call = node_to_call
         self.arg_nodes = arg_nodes
+        self.kwargs_nodes = kwargs_nodes
 
         self.pos_start = self.node_to_call.pos_start
 
-        if len(self.arg_nodes) > 0:
-            self.pos_end = self.arg_nodes[-1].pos_end
+        if self.arg_nodes:
+            try:
+                self.pos_end = self.arg_nodes[len(arg_nodes) - 1].pos_end
+            except AttributeError:
+                self.pos_end = self.node_to_call.pos_end
+        elif self.kwargs_nodes:
+            self.pos_end = self.kwargs_nodes[-1][1].pos_end
         else:
             self.pos_end = self.node_to_call.pos_end
 
@@ -701,41 +711,68 @@ class Parser:
             res.register_advancement()
             self.current_tok = self.advance()
             arg_nodes:list[Any] = []
+            kwargs_nodes:list[tuple[Token, Any]] = []
+            kwargs = False
 
             if self.current_tok.type == TT_RPAREN:
                 res.register_advancement()
                 self.current_tok = self.advance()
             else:
-                arg_nodes.append(res.register(self.expr()))
-                if res.error:
-                    return res.failure(
-                        InvalidSyntaxError(
-                            self.current_tok.pos_start,
-                            self.current_tok.pos_end,
-                            "Expected ')', or expression",
-                        )
-                    )
+                if self.current_tok.type == TT_IDENTIFIER:
+                    var_name = self.current_tok
+                    res.register_advancement()
+                    self.current_tok = self.advance()
 
+                    if self.current_tok.type == TT_EQ:
+                        res.register_advancement()
+                        self.advance()
+                        expr = res.register(self.expr())
+                        kwargs = True
+                        kwargs_nodes.append((var_name, expr))
+                    else:
+                        arg_nodes.append(res.register(self.expr()))
+                else:
+                    arg_nodes.append(res.register(self.expr()))
+                
                 while self.current_tok.type == TT_COMMA:
                     res.register_advancement()
-                    self.advance()
+                    self.current_tok = self.advance()
 
-                    arg_nodes.append(res.register(self.expr()))
-                    if res.error:
-                        return res
+                    if self.current_tok.type == TT_IDENTIFIER:
+                        var_name = self.current_tok
+                        res.register_advancement()
+                        self.current_tok = self.advance()
 
-                if self.current_tok.type != TT_RPAREN:
-                    return res.failure(
-                        InvalidSyntaxError(
-                            self.current_tok.pos_start,
-                            self.current_tok.pos_end,
-                            f"Expected ',' or ')'",
-                        )
-                    )
-
+                        if self.current_tok.type == TT_EQ:
+                            res.register_advancement()
+                            self.advance()
+                            expr = res.register(self.expr())
+                            kwargs = True
+                            kwargs_nodes.append((var_name, expr))
+                        else:
+                            if kwargs:
+                                return res.failure(
+                                    InvalidSyntaxError(
+                                        self.current_tok.pos_start,
+                                        self.current_tok.pos_end,
+                                        "keyword argument can't follow positional argument",
+                                    )
+                                )
+                            arg_nodes.append(res.register(self.expr()))
+                    else:
+                        if kwargs:
+                                return res.failure(
+                                    InvalidSyntaxError(
+                                        self.current_tok.pos_start,
+                                        self.current_tok.pos_end,
+                                        "keyword argument can't follow positional argument",
+                                    )
+                                )
+                        arg_nodes.append(res.register(self.expr()))
+                
                 res.register_advancement()
                 self.advance()
-            return res.success(FuncCallNode(atom, arg_nodes))
+            return res.success(FuncCallNode(atom, arg_nodes, kwargs_nodes))
         return res.success(atom)
 
     def func_def(self) -> ParseResult:  # ParseResult is used to return error or node
@@ -771,7 +808,26 @@ class Parser:
         self.current_tok = self.advance()
 
         arg_name_toks: list[tuple[Token|str, bool, Any]] = [] # Any Node
-
+        mulargs = None
+        mulkwargs = None
+        if self.current_tok.type == TT_MUL:
+            res.register_advancement()
+            self.advance()
+            
+            if self.current_tok.type == TT_MUL:
+                res.register_advancement()
+                self.advance()
+                var = self.current_tok
+                res.register_advancement()
+                self.advance()
+                mulkwargs = var
+            else:
+                var = self.current_tok
+                res.register_advancement()
+                self.advance()
+                mulargs = var
+        
+                
         if self.current_tok.type == TT_IDENTIFIER:
             optional_args = False
             var_name:Token = self.current_tok
@@ -795,7 +851,40 @@ class Parser:
             while self.current_tok.type == TT_COMMA:
                 res.register_advancement()
                 self.current_tok = self.advance()
-
+                if self.current_tok.type == TT_MUL:
+                    res.register_advancement()
+                    self.advance()
+                    
+                    if self.current_tok.type == TT_MUL:
+                        if mulkwargs:
+                            return res.failure(
+                                InvalidSyntaxError(
+                                    self.current_tok.pos_start,
+                                    self.current_tok.pos_end,
+                                    "Multiple **kwargs",
+                                )
+                            )
+                        res.register_advancement()
+                        self.advance()
+                        var = self.current_tok
+                        res.register_advancement()
+                        self.advance()
+                        
+                        mulkwargs = var
+                    else:
+                        if mulargs:
+                            return res.failure(
+                                InvalidSyntaxError(
+                                    self.current_tok.pos_start,
+                                    self.current_tok.pos_end,
+                                    "Multiple *args",
+                                )
+                            )
+                        var = self.current_tok
+                        res.register_advancement()
+                        self.advance()
+                        mulargs = var
+                
                 if self.current_tok.type != TT_IDENTIFIER:
                     return res.failure(
                         InvalidSyntaxError(
@@ -866,7 +955,7 @@ class Parser:
             if res.error:
                 return res
 
-        return res.success(FuncDefNode(var_name_tok, arg_name_toks, body))
+        return res.success(FuncDefNode(var_name_tok, arg_name_toks, mulargs, mulkwargs, body))
 
     def list_expr(self) -> ParseResult:  # ParseResult is used to return error or node
         res = ParseResult()
