@@ -1,7 +1,7 @@
 
 fex root(x, n=2) -> return x ^ (1 / n)
 
-fex int(x) -> return convert(x, "number")
+#fex int(x) -> return convert(x, "number")
 
 fex intput(prompt="") -> return convert(input(prompt), "number")
 
@@ -26,10 +26,14 @@ fex range(x, y=0, steps=1):
     return result
 end
 
-fex sum(arr):
+fex sum(*arr):
     let result = 0
-    for i = 0 to (len(arr) -1 ):
+    for i = 0 to 9:
         let result = result + (arr / i)
         end
     return result
-end
+    end
+
+fex test(a, b) -> return a + b
+
+print(1, 2, 3, 4, 5, 6, 7, 8, 9, 10)

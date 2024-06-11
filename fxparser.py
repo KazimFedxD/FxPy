@@ -43,6 +43,8 @@ class VarAccessNode:
         self.pos_start = self.var_name_tok.pos_start
         self.pos_end = self.var_name_tok.pos_end
 
+    def __repr__(self):
+        return f"{self.var_name_tok}"
 
 
 class VarAssignNode:
@@ -111,6 +113,9 @@ class ListNode:
         self.element_nodes = element_nodes
         self.pos_start = pos_start
         self.pos_end = pos_end
+        
+    def __repr__(self):
+        return f"({self.element_nodes})"
 
 
 
@@ -168,6 +173,8 @@ class FuncDefNode:
 
         self.pos_end = self.body_node.pos_end
 
+    def __repr__(self):
+        return f"func {self.var_name_tok}({self.arg_name_toks})\n {self.body_node}"
 
 
 class FuncCallNode:
@@ -188,6 +195,8 @@ class FuncCallNode:
         else:
             self.pos_end = self.node_to_call.pos_end
 
+    def __repr__(self):
+        return f"{self.node_to_call}({self.arg_nodes})"
 
 class ImportNode:
     def __init__(self, module_name: Token, alias: Token|None = None, pos_start: Position|None = None, pos_end: Position|None = None):
